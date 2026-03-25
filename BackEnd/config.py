@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     AWS_REGION: str
     S3_BUCKET_NAME: str
     DYNAMO_TABLE_NAME: str
+    AWS_LAMBDA_FUNCTION_NAME: str
 
     # Cognito Configuration
     COGNITO_REGION: str
