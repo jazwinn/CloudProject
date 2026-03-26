@@ -1,8 +1,7 @@
 import React from 'react';
-import { clusterConfigs } from '../data/photos';
 
-export default function Legend({ filter }) {
-  if (filter === 'all') {
+export default function Legend({ filter, clusterData }) {
+  if (filter === 'all' || !clusterData || !clusterData[filter]) {
     return (
       <div style={styles.container}>
         <span style={styles.hint}>Select a filter to cluster by category</span>
@@ -10,7 +9,7 @@ export default function Legend({ filter }) {
     );
   }
 
-  const config = clusterConfigs[filter];
+  const config = clusterData[filter];
 
   return (
     <div style={styles.container}>
