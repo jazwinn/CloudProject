@@ -29,6 +29,14 @@ export async function getGraph(token, timeEps = 120, distEps = 5.0) {
   return res.json();
 }
 
+export async function getImageUrl(token, imageId) {
+  const res = await fetch(`${API_BASE}/image/${imageId}`, {
+    headers: { 'Authorization': `Bearer ${token}` }
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json(); // { presigned_url: "..." }
+}
+
 // Automatically loops if the backend is 'processing' in AWS Lambda
 export async function getClusters(token, mode = 'combined', timeEps = 60, distEps = 1.0, minSamples = 2) {
   const params = new URLSearchParams({

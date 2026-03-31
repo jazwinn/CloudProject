@@ -50,3 +50,20 @@ def upload_file_to_s3(file_obj, original_filename: str, user_id: str, content_ty
     except ClientError as e:
         logger.error(f"S3 Upload Error: {e}")
         raise e
+
+
+def generate_presigned_url(file_key: str, expires_in: int = 3600) -> str:
+    """
+    Generates a presigned URL for reading an existing S3 object.
+    """
+    try:
+        settings = get_settings()
+        s3_client = get_s3_client()
+        return s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': settings.S3_BUCKET_NAME, 'Key': file_key},
+            ExpiresIn=expires_in
+        )
+    except ClientError as e:
+        logger.error(f"S3 Presign Error: {e}")
+        raise e

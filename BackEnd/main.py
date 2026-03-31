@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import upload, graph, clusters
+from routers import upload, graph, clusters, image
 
 app = FastAPI(
     title="CloudGraph API",
@@ -20,6 +20,7 @@ app.add_middleware(
 app.include_router(upload.router, prefix="/api")
 app.include_router(graph.router, prefix="/api")
 app.include_router(clusters.router, prefix="/api")
+app.include_router(image.router, prefix="/api")
 
 @app.get("/health")
 def health_check():
