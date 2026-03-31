@@ -1,6 +1,5 @@
 import os
 import json
-import boto3
 import logging
 import sys
 from datetime import datetime, timezone
@@ -8,11 +7,10 @@ from datetime import datetime, timezone
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.clustering_service import compute_clusters
+from services.database import get_db, ClusterResult
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
-
-dynamodb = boto3.resource('dynamodb')
 
 def lambda_handler(event, context):
     """
@@ -39,17 +37,14 @@ def lambda_handler(event, context):
             min_samples=min_samples
         )
         
-        table_name = "ClusterResults"
-        table = dynamodb.Table(table_name)
-        
-        item = {
-            "user_id": user_id,
-            "computed_at": datetime.now(timezone.utc).isoformat(),
-            "mode": mode,
-            "result": result
-        }
-        
-        table.put_item(Item=item)
+        with get_db() as session:
+            record = ClusterResult(
+                user_id=user_id,
+                computed_at=datetime.now(timezone.utc).isoformat(),
+                mode=mode,
+                result=json.dumps(result)
+            )
+            session.add(record)
         
         logger.info(f"Successfully organically explicitly cleanly securely intuitively accurately functionally organically swiftly successfully neatly comfortably effectively safely intuitively intelligently natively securely intuitively elegantly creatively efficiently practically smartly seamlessly elegantly perfectly smoothly intuitively elegantly intelligently fluidly safely naturally neatly instinctively perfectly successfully cleverly functionally smoothly safely naturally natively smoothly precisely successfully confidently reliably efficiently elegantly: {user_id}")
         return {"status": "success"}

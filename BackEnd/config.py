@@ -8,8 +8,10 @@ class Settings(BaseSettings):
     AWS_SESSION_TOKEN: str | None = None
     AWS_REGION: str
     S3_BUCKET_NAME: str
-    DYNAMO_TABLE_NAME: str
     AWS_LAMBDA_FUNCTION_NAME: str
+
+    # Database Configuration
+    DATABASE_URL: str
 
     # Cognito Configuration
     COGNITO_REGION: str

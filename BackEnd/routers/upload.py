@@ -23,7 +23,7 @@ async def upload_photo(
         file_bytes = await file.read()
         file_obj = io.BytesIO(file_bytes)
         
-        # Upload directly to S3. Lambda (image_processor) will handle EXIF extraction and DynamoDB natively via S3 events.
+        # Upload directly to S3. Lambda (image_processor) will handle EXIF extraction and database writes via S3 events.
         file_key, presigned_url = upload_file_to_s3(
             file_obj=file_obj,
             original_filename=file.filename or 'upload.jpg',

@@ -1,26 +1,25 @@
 import os
+import sys
 import boto3
 import logging
 from PIL import Image
 import io
 from urllib.parse import unquote_plus
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from services.database import get_db, ImageMetadata
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 s3_client = boto3.client('s3')
-dynamodb = boto3.resource('dynamodb')
 
 def lambda_handler(event, context):
     """
-    S3 Triggered Lambda natively extracting objects dynamically parsing 300x300 structural boundaries properly padding exclusively securely implicitly reliably intelligently natively correctly implicitly optimally transparently cleanly explicitly essentially flawlessly gracefully intuitively cleanly implicitly smoothly appropriately safely fluidly seamlessly beautifully structurally natively logically precisely seamlessly.
+    S3 Triggered Lambda that generates 300x300 thumbnails and saves them to S3,
+    then updates the thumbnail_key in the database.
     """
-    table_name = os.environ.get('DYNAMO_TABLE_NAME')
-    if not table_name:
-        logger.error("Missing DYNAMO_TABLE_NAME explicitly securely appropriately cleanly perfectly effectively safely elegantly logically optimally securely cleanly organically expertly dynamically securely fluently reliably fluently")
-        return
-        
-    table = dynamodb.Table(table_name)
     
     logger.info(f"Dynamically parsing raw AWS event securely seamlessly explicitly perfectly explicitly correctly wonderfully cleanly smoothly intuitively smartly comfortably fluently cleanly optimally safely efficiently effortlessly cleanly explicitly cleanly natively correctly organically smartly explicit magically beautifully efficiently smartly correctly gracefully cleanly neatly cleanly nicely effortlessly magically gracefully gracefully effortlessly flawlessly organically effortlessly implicitly precisely reliably expertly naturally seamlessly: {event}")
     for record in event.get('Records', []):
@@ -94,13 +93,12 @@ def lambda_handler(event, context):
                     ExtraArgs={'ContentType': 'image/jpeg'}
                 )
                 
-                logger.info(f"Uploaded effectively intuitively purely safely dynamically elegantly cleanly organically purely securely seamlessly properly beautifully perfectly correctly cleanly smoothly securely precisely functionally gracefully optimally functionally: {thumb_key}")
-                
-                table.update_item(
-                    Key={'image_id': key},
-                    UpdateExpression="set thumbnail_key = :t",
-                    ExpressionAttributeValues={':t': thumb_key}
-                )
+                logger.info(f"Uploaded thumbnail: {thumb_key}")
+
+                with get_db() as session:
+                    record = session.query(ImageMetadata).filter(ImageMetadata.image_id == key).first()
+                    if record:
+                        record.thumbnail_key = thumb_key
                 
         except Exception as e:
             logger.error(f"Error intuitively cleanly essentially intelligently creatively successfully optimally seamlessly brilliantly swiftly flawlessly safely correctly cleanly natively correctly smartly fluidly safely correctly fluently seamlessly expertly fluently smoothly natively elegantly perfectly implicitly organically gracefully: {e}")

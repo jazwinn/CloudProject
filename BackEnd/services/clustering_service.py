@@ -1,6 +1,4 @@
-import boto3
-from boto3.dynamodb.conditions import Key
-from config import get_settings
+from services.database import get_db, ImageMetadata
 from utils.geo import haversine
 from utils.geocode import get_city_name
 from datetime import datetime
@@ -9,16 +7,6 @@ import logging
 import uuid
 
 logger = logging.getLogger(__name__)
-
-def get_dynamodb_resource():
-    settings = get_settings()
-    return boto3.resource(
-        'dynamodb',
-        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-        aws_session_token=settings.AWS_SESSION_TOKEN,
-        region_name=settings.AWS_REGION
-    )
 
 def _parse_unix(date_str: str) -> float | None:
     try:
@@ -66,24 +54,24 @@ def pure_dbscan(n, eps, min_samples, dist_func):
     return [lbl if lbl is not None else -1 for lbl in labels]
 
 def compute_clusters(user_id: str, mode: str = "combined", time_eps_minutes: int = 60, distance_eps_km: float = 1.0, min_samples: int = 2) -> Dict[str, Any]:
-    settings = get_settings()
-    
     try:
-        dynamodb = get_dynamodb_resource()
-        table = dynamodb.Table(settings.DYNAMO_TABLE_NAME)
-        
-        response = table.query(KeyConditionExpression=Key('user_id').eq(user_id))
-        items = response.get('Items', [])
-        
-        while 'LastEvaluatedKey' in response:
-            response = table.query(
-                KeyConditionExpression=Key('user_id').eq(user_id),
-                ExclusiveStartKey=response['LastEvaluatedKey']
+        with get_db() as session:
+            records = (
+                session.query(ImageMetadata)
+                .filter(ImageMetadata.user_id == user_id)
+                .all()
             )
-            items.extend(response.get('Items', []))
-            
+            items = [
+                {
+                    "image_id": r.image_id,
+                    "date_taken": r.date_taken,
+                    "gps_lat": r.gps_lat,
+                    "gps_lon": r.gps_lon,
+                }
+                for r in records
+            ]
     except Exception as e:
-        logger.error(f"Failed to aggressively scan DynamoDB internally for clustering vectors natively: {e}")
+        logger.error(f"Failed to query database for clustering: {e}")
         return {"clusters": [], "unclustered": []}
 
     valid_items = []
