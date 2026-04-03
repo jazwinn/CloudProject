@@ -1,3 +1,5 @@
+# Deploy with reserved concurrency = 10 to prevent runaway DBSCAN jobs.
+# Set via: aws lambda put-function-concurrency --function-name clustering_processor --reserved-concurrent-executions 10
 import os
 import json
 import logging
