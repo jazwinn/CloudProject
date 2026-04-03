@@ -1,0 +1,46 @@
+{
+  "_comment": [
+    "IAM Policy for the Authenticated Role of a Cognito Identity Pool.",
+    "The ${cognito-identity.amazonaws.com:sub} variable is resolved by AWS at request time",
+    "using the authenticated user's Identity Pool subject (sub). This makes cross-user",
+    "access impossible at the infrastructure level — no application bug can override it.",
+    "",
+    "Attach this policy to the Authenticated Role ARN shown in your Identity Pool settings.",
+    "Replace YOUR_BUCKET_NAME with your actual S3 bucket name."
+  ],
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowUserObjectReadWrite",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject"
+      ],
+      "Resource": "arn:aws:s3:::YOUR_BUCKET_NAME/uploads/${cognito-identity.amazonaws.com:sub}/*"
+    },
+    {
+      "Sid": "AllowUserPrefixList",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::YOUR_BUCKET_NAME",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": "uploads/${cognito-identity.amazonaws.com:sub}/*"
+        }
+      }
+    },
+    {
+      "Sid": "DenyCrossUserGetObject",
+      "_comment": "Explicitly deny GetObject on any key that does NOT belong to this user. Belt-and-suspenders: even if the Allow above is misconfigured, this Deny wins.",
+      "Effect": "Deny",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::YOUR_BUCKET_NAME/uploads/*",
+      "Condition": {
+        "StringNotLike": {
+          "s3:prefix": "uploads/${cognito-identity.amazonaws.com:sub}/*"
+        }
+      }
+    }
+  ]
+}

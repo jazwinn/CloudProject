@@ -90,23 +90,30 @@ A FastAPI backend handling authenticated photo uploads, automated EXIF extractio
 Client
   │
   ▼
-FastAPI (EC2 / Docker)
+FastAPI (ECS Fargate)
   │
-  ├── POST /api/upload ──────► S3 Bucket (uploads/{user_id}/{uuid}.ext)
-  │                                  │
-  │                          S3 ObjectCreated event
-  │                          ┌───────┴────────┐
-  │                          ▼                ▼
-  │                 image_processor.py   thumbnail_generator.py
-  │                 (EXIF → SQL DB)      (300x300 JPEG → S3)
+  ├── POST /api/upload ──────────► S3 Bucket (uploads/{user_id}/{uuid}.ext)
+  │                                       │
+  │                               S3 ObjectCreated
+  │                                       │
+  │                                    SNS Topic
+  │                                       │
+  │                                    SQS Queue (cloudgraph-image-processing)
+  │                               ┌──────┴──────┐
+  │                               ▼             ▼
+  │                    image_processor     thumbnail_generator
+  │                    (EXIF → SQL DB)     (300x300 JPEG → S3)
+  │
+  ├── POST /api/upload/batch-presign ──► Presigned S3 PUT URLs (×500 max)
+  │                Client uploads directly to S3 in parallel batches of 20
   │
   ├── GET /api/graph ────────► SQL DB → Haversine + time comparison → D3-ready JSON
   │
   └── GET /api/clusters ─────► SQL DB → DBSCAN → cluster labels + geocoding
-                                    └── (large libraries) → Lambda async → SQL cache
+                                    └── (large jobs) → Lambda async → SQL cache
 ```
 
-**AWS services used:** S3, Lambda, Cognito, RDS (PostgreSQL)
+**AWS services used:** S3, SNS, SQS, Lambda, Cognito, RDS (PostgreSQL), ECS Fargate, ECR
 
 ---
 
@@ -121,7 +128,7 @@ Simple liveness check.
 ---
 
 #### `POST /api/upload`
-Upload a photo. The file is stored in S3 under `uploads/{user_id}/{uuid}.ext`. Lambda functions automatically handle EXIF extraction and thumbnail generation in the background.
+Upload a single photo. The file is stored in S3 under `uploads/{user_id}/{uuid}.ext`. Lambda functions automatically handle EXIF extraction and thumbnail generation in the background via the SQS queue.
 
 **Auth:** `Authorization: Bearer <cognito_token>`
 **Body:** `multipart/form-data` — `file` field (JPEG, PNG, or HEIC)
@@ -133,7 +140,28 @@ Upload a photo. The file is stored in S3 under `uploads/{user_id}/{uuid}.ext`. L
   "message": "Upload successful. Background processing initiated."
 }
 ```
-The `presigned_url` is valid for 1 hour.
+The `presigned_url` is valid for **15 minutes**.
+
+---
+
+#### `POST /api/upload/batch-presign`
+Generate presigned S3 PUT URLs for a batch of up to 500 files. The client uploads directly to S3 in parallel — no file data passes through the API server. See [bulkUpload.js](#bulk-upload) for the frontend utility.
+
+**Auth:** `Authorization: Bearer <cognito_token>`
+**Body:** `application/json`
+
+```json
+{ "files": [{ "filename": "photo1.jpg", "content_type": "image/jpeg" }] }
+```
+
+```json
+{
+  "uploads": [
+    { "filename": "photo1.jpg", "file_key": "uploads/.../uuid.jpg", "presigned_url": "https://..." }
+  ]
+}
+```
+Each presigned URL is scoped to exactly `uploads/{user_id}/{uuid}.ext` with a **15-minute TTL**.
 
 ---
 
@@ -207,6 +235,7 @@ Tables are created by running `python BackEnd/scripts/setup_database.py` once.
 | `gps_lat` | FLOAT (nullable) | Latitude from EXIF GPS |
 | `gps_lon` | FLOAT (nullable) | Longitude from EXIF GPS |
 | `thumbnail_key` | VARCHAR (nullable) | S3 key of the generated thumbnail |
+| `status` | VARCHAR | Processing state: `pending` → `processed` |
 
 #### `cluster_results`
 
@@ -295,11 +324,19 @@ BackEnd/
 2. Select **PostgreSQL** as the engine (or **Aurora PostgreSQL** for production)
 3. Choose a `db.t3.micro` instance for development
 4. Note down your **endpoint**, **port**, **username**, and **password**
-5. Make sure its **Security Group** allows inbound connections on port `5432` from your EC2 instance
+5. Make sure its **Security Group** allows inbound connections on port `5432` from your ECS task security group
+
+#### 4. Amazon SQS (Upload Buffering)
+1. Deploy the SQS queue using the provided Terraform config:
+```bash
+cd BackEnd/infra
+terraform init && terraform apply
+```
+Or follow the manual AWS CLI instructions in `BackEnd/scripts/setup_lambda_triggers.py`.
 
 ---
 
-### Phase 2: Backend & Lambdas (EC2)
+### Phase 2: Backend & Lambdas (ECS Fargate)
 
 #### 1. Serverless Lambda Workers
 1. Create 2 empty Lambda functions in the AWS Console: `thumbnail_generator` and `image_processor`. Choose **Python 3.10+** as the runtime
@@ -311,28 +348,30 @@ chmod +x scripts/deploy_lambda.sh
 bash scripts/deploy_lambda.sh
 ```
 4. In the AWS Console, set the **Handler** for each Lambda to `image_processor.lambda_handler` and `thumbnail_generator.lambda_handler`
-5. In your S3 bucket's **Event Notifications**, create an `s3:ObjectCreated:*` event with prefix `uploads/` and route it to an **SNS Topic**. Subscribe both Lambdas to that topic.
+5. Add an **SQS event source mapping** to each Lambda pointing at the `cloudgraph-image-processing` queue with `BatchSize=10` and `ReportBatchItemFailures` enabled (see `scripts/setup_lambda_triggers.py` for CLI commands)
+6. Set reserved concurrency on `clustering_processor` to **10** to prevent runaway DBSCAN jobs
 
-#### 2. FastAPI Core Server (Amazon EC2)
-1. Launch a new **Ubuntu 22.04 LTS** EC2 instance (`t2.micro` or larger)
-2. Add an **Inbound Rule** to its security group: `Custom TCP`, port `8000`, source `Anywhere-IPv4`
-3. SSH into the instance and run:
+#### 2. FastAPI Core Server (Amazon ECS Fargate)
+
+> **Note:** ECS Fargate runs your Docker container without managing EC2 instances. Credentials are provided automatically via the Task IAM Role — do not use static credentials.
+
+1. Build and push the Docker image to ECR, then deploy to ECS:
 ```bash
-sudo apt update && sudo apt upgrade -y
-sudo apt install python3-pip git -y
-git clone https://github.com/YOUR_GITHUB_USERNAME/CloudProject.git
-cd CloudProject/BackEnd
-pip install -r requirements.txt
+cd BackEnd
+chmod +x infra/ecs-deploy.sh
+bash infra/ecs-deploy.sh
 ```
-4. Create your environment file:
+(Update the variable placeholders in `ecs-deploy.sh` before running.)
+
+2. Create the database tables:
 ```bash
-nano .env
+# Run locally against your RDS instance, or exec into the ECS task
+python BackEnd/scripts/setup_database.py
 ```
-With the following contents:
+This also enables **Row Level Security** on both tables.
+
+3. Create an `.env` file for local development only (not needed on ECS):
 ```env
-AWS_ACCESS_KEY_ID="..."
-AWS_SECRET_ACCESS_KEY="..."
-AWS_SESSION_TOKEN="..."         # omit if using long-term credentials
 AWS_REGION="us-east-1"
 S3_BUCKET_NAME="cloudgraph-uploads-xyz"
 AWS_LAMBDA_FUNCTION_NAME="cloudgraph-cluster-processor"
@@ -341,30 +380,58 @@ COGNITO_REGION="us-east-1"
 COGNITO_USER_POOL_ID="us-east-1_xxxxx"
 COGNITO_APP_CLIENT_ID="xxxxxxxxx"
 ```
-5. Create the database tables:
-```bash
-python scripts/setup_database.py
-```
-6. Start the server permanently in the background:
-```bash
-nohup uvicorn main:app --host 0.0.0.0 --port 8000 &
-```
-Your API is now live at `http://YOUR-EC2-IP:8000`. Interactive docs at `http://YOUR-EC2-IP:8000/docs`.
 
-Alternatively, run with Docker:
-```bash
-docker build -t cloudgraph-backend .
-docker run -p 8000:8000 --env-file .env cloudgraph-backend
+4. Set up auto-scaling (optional but recommended):
+See `BackEnd/infra/ecs-autoscaling.json` for CLI commands to apply CPU target tracking.
+
+---
+
+## Security Architecture
+
+Three independent isolation layers ensure one user can never access another user's data:
+
+| Layer | Mechanism | Where enforced |
+|---|---|---|
+| **S3 IAM Conditions** | Cognito Identity Pool policy restricts `PutObject`/`GetObject` to `uploads/{identity_sub}/*` at the AWS infrastructure level | AWS IAM (see `infra/cognito-identity-pool-policy.json`) |
+| **Presigned URL Scoping** | The API only generates presigned PUT/GET URLs for keys starting with `uploads/{user_id}/`. A `ValueError` is raised server-side if the prefix doesn't match. URL TTL is 15 minutes. | `services/s3_service.py` |
+| **PostgreSQL Row Level Security** | RLS policies on `image_metadata` and `cluster_results` enforce `user_id = current_setting('app.current_user_id')` at query time. All API routes set this via `set_rls_user()` before every query. | `services/database.py`, PostgreSQL |
+
+---
+
+## Bulk Upload
+
+For uploading large batches (up to 500 images) without routing file data through the API server:
+
+### Backend: `POST /api/upload/batch-presign`
+- Call once with all filenames to receive presigned S3 PUT URLs
+- Validates content types and enforces 500-file cap
+- Writes `status='pending'` rows to `image_metadata` immediately
+- Lambda updates `status='processed'` after EXIF extraction
+
+### Frontend: `FrontEnd/src/utils/bulkUpload.js`
+```javascript
+import { bulkUpload } from './utils/bulkUpload';
+
+const { succeeded, failed } = await bulkUpload(
+  fileList,          // FileList or File[]
+  cognitoToken,      // JWT bearer token
+  ({ completed, total, failed }) => {
+    console.log(`${completed}/${total} uploaded, ${failed} failed`);
+  }
+);
 ```
+- Uploads directly to S3 in parallel batches of 20 using `Promise.allSettled`
+- A single failed upload never aborts the entire batch
+- Returns `{ succeeded: [...], failed: [...] }` for UI error surfacing
 
 ---
 
 ### Phase 3: React Frontend (AWS Amplify)
 
 #### 1. Update the API Base URL
-In `FrontEnd/src/api.js`, point the app at your live backend:
+In `FrontEnd/src/api.js`, point the app at your live ECS backend:
 ```javascript
-export const API_BASE = 'http://YOUR-EC2-IP:8000/api';
+export const API_BASE = 'https://YOUR-ECS-SERVICE-URL/api';
 ```
 
 #### 2. Deploy to AWS Amplify

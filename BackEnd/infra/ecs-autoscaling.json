@@ -1,0 +1,36 @@
+{
+  "_comment": "ECS Application Auto Scaling policy for cloudgraph-api. This is a reference document — apply via AWS Console or CLI, not Terraform.",
+
+  "scalableTarget": {
+    "_comment": "Register the ECS service as a scalable target with Application Auto Scaling.",
+    "ServiceNamespace": "ecs",
+    "ResourceId": "service/YOUR_ECS_CLUSTER_NAME/YOUR_ECS_SERVICE_NAME",
+    "ScalableDimension": "ecs:service:DesiredCount",
+    "MinCapacity": 1,
+    "MaxCapacity": 10
+  },
+
+  "scalingPolicy": {
+    "_comment": "Target Tracking Scaling Policy — automatically scales tasks to keep avg CPU at 60%.",
+    "PolicyName": "cloudgraph-api-cpu-target-tracking",
+    "PolicyType": "TargetTrackingScaling",
+    "TargetTrackingScalingPolicyConfiguration": {
+      "TargetValue": 60.0,
+      "_targetComment": "Keep average CPU across all running tasks at 60%. Scale out aggressively when spikes occur during bulk uploads, scale in conservatively to avoid thrashing.",
+      "PredefinedMetricSpecification": {
+        "PredefinedMetricType": "ECSServiceAverageCPUUtilization"
+      },
+      "ScaleInCooldown": 300,
+      "_scaleInComment": "Wait 5 minutes before scaling in. Prevents premature task termination during bulk upload processing.",
+      "ScaleOutCooldown": 60,
+      "_scaleOutComment": "React quickly (60 seconds) to CPU spikes — important during concurrent bulk upload bursts.",
+      "DisableScaleIn": false
+    }
+  },
+
+  "cliCommands": {
+    "_comment": "AWS CLI commands to apply this policy. Run AFTER deploying the ECS service.",
+    "registerScalableTarget": "aws application-autoscaling register-scalable-target --service-namespace ecs --resource-id service/YOUR_ECS_CLUSTER_NAME/YOUR_ECS_SERVICE_NAME --scalable-dimension ecs:service:DesiredCount --min-capacity 1 --max-capacity 10",
+    "putScalingPolicy": "aws application-autoscaling put-scaling-policy --service-namespace ecs --resource-id service/YOUR_ECS_CLUSTER_NAME/YOUR_ECS_SERVICE_NAME --scalable-dimension ecs:service:DesiredCount --policy-name cloudgraph-api-cpu-target-tracking --policy-type TargetTrackingScaling --target-tracking-scaling-policy-configuration '{\"TargetValue\":60.0,\"PredefinedMetricSpecification\":{\"PredefinedMetricType\":\"ECSServiceAverageCPUUtilization\"},\"ScaleInCooldown\":300,\"ScaleOutCooldown\":60}'"
+  }
+}
