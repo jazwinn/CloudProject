@@ -51,27 +51,3 @@ def get_db() -> Session:
     finally:
         session.close()
 
-
-@contextmanager
-def set_rls_user(session: Session, user_id: str):
-    """Context manager that scopes Row Level Security to the given user for the duration
-    of the current transaction.
-
-    Usage:
-        with get_db() as session:
-            with set_rls_user(session, current_user):
-                results = session.query(ImageMetadata).all()
-
-    Mechanism:
-        Executes SET LOCAL app.current_user_id = :user_id before yielding.
-        SET LOCAL scopes this to the current transaction only — it resets automatically
-        on commit/rollback, making it safe in a connection pool environment.
-
-    The PostgreSQL RLS policies on image_metadata and cluster_results check
-    current_setting('app.current_user_id', true) to enforce row-level isolation.
-    If this context manager is not used, RLS will evaluate the setting as NULL
-    and block all access — the safe/secure default.
-    """
-    session.execute(text("SET LOCAL app.current_user_id = :uid"), {"uid": user_id})
-    yield session
-

@@ -21,13 +21,12 @@ async def get_relationship_graph(
     """
     try:
         with get_db() as session:
-            with set_rls_user(session, user_id):
-                # RLS enforced at DB level — user_id filter in build_graph() is defence-in-depth
-                graph = build_graph(
-                    user_id=user_id,
-                    time_threshold_minutes=time_threshold_minutes,
-                    dist_threshold_km=distance_threshold_km
-                )
+            # user_id filter in build_graph() ensures isolation
+            graph = build_graph(
+                user_id=user_id,
+                time_threshold_minutes=time_threshold_minutes,
+                dist_threshold_km=distance_threshold_km
+            )
         return graph
     except Exception as e:
         logger.error(f"Graph endpoint failed: {e}")

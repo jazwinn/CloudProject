@@ -26,38 +26,35 @@ async def get_clusters(
 
     try:
         with get_db() as session:
-            with set_rls_user(session, user_id):
-                # 1. Count photos for this user
-                # RLS enforced at DB level — user_id filter here is defence-in-depth
-                items_count = (
-                    session.query(ImageMetadata)
-                    .filter(ImageMetadata.user_id == user_id)
-                    .count()
+            # 1. Count photos for this user
+            items_count = (
+                session.query(ImageMetadata)
+                .filter(ImageMetadata.user_id == user_id)
+                .count()
+            )
+
+            # 2. Check sync vs async threshold
+            if items_count < 0:
+                return compute_clusters(user_id, mode, time_eps_minutes, distance_eps_km, min_samples)
+
+            # 3. Check for a fresh cached ClusterResult
+            try:
+                latest = (
+                    session.query(ClusterResult)
+                    .filter(ClusterResult.user_id == user_id, ClusterResult.mode == mode)
+                    .order_by(ClusterResult.computed_at.desc())
+                    .first()
                 )
 
-                # 2. Check sync vs async threshold
-                if items_count < 0:
-                    return compute_clusters(user_id, mode, time_eps_minutes, distance_eps_km, min_samples)
+                if latest:
+                    computed_time = datetime.fromisoformat(latest.computed_at)
+                    if datetime.now(timezone.utc) - computed_time < timedelta(minutes=10):
+                        logger.info("Returning fresh cached cluster result from database")
+                        return json.loads(latest.result)
 
-                # 3. Check for a fresh cached ClusterResult
-                # RLS enforced at DB level — user_id filter here is defence-in-depth
-                try:
-                    latest = (
-                        session.query(ClusterResult)
-                        .filter(ClusterResult.user_id == user_id, ClusterResult.mode == mode)
-                        .order_by(ClusterResult.computed_at.desc())
-                        .first()
-                    )
-
-                    if latest:
-                        computed_time = datetime.fromisoformat(latest.computed_at)
-                        if datetime.now(timezone.utc) - computed_time < timedelta(minutes=10):
-                            logger.info("Returning fresh cached cluster result from database")
-                            return json.loads(latest.result)
-
-                except Exception as e:
-                    logger.warning(f"Failed to query ClusterResults: {e}")
-                    # Fallthrough to Lambda
+            except Exception as e:
+                logger.warning(f"Failed to query ClusterResults: {e}")
+                # Fallthrough to Lambda
 
         # 4. Invoke Lambda async (outside DB session — Lambda is async, no DB needed here)
         invoke_clustering_lambda(user_id, mode, time_eps_minutes, distance_eps_km, min_samples)

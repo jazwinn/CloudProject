@@ -363,51 +363,37 @@ BackEnd/
    - **Instances need:** 300 seconds to warm up.
 
 #### 3. Database Migration
-Connect to your RDS instance and execute the SQL DDL. Enforce RLS:
-```sql
-ALTER TABLE image_metadata ENABLE ROW LEVEL SECURITY;
-CREATE POLICY user_isolation ON image_metadata USING (user_id = current_setting('app.current_user_id', true));
-```
+
+**Good news!** The API now includes **auto-migration logic**. As soon as your first EC2 instance starts up and connects to the RDS database, it will automatically create the necessary `image_metadata` and `cluster_results` tables for you.
+
+You do **not** need to run any scripts locally if you cannot connect to the database from your computer. Just ensure your `DATABASE_URL` environment variable is correct in your Launch Template's User Data.
 
 ---
 
 ## Security Architecture
 
-Three independent isolation layers ensure one user can never access another user's data:
+The application uses **Amazon Cognito** for authentication. All API calls (except `/health`) require a valid JWT token.
 
-| Layer | Mechanism | Where enforced |
-|---|---|---|
-| **S3 IAM Conditions** | Cognito Identity Pool policy restricts `PutObject`/`GetObject` to `uploads/{identity_sub}/*` at the AWS infrastructure level | AWS IAM (see `infra/cognito-identity-pool-policy.json`) |
-| **Presigned URL Scoping** | The API only generates presigned PUT/GET URLs for keys starting with `uploads/{user_id}/`. A `ValueError` is raised server-side if the prefix doesn't match. URL TTL is 15 minutes. | `services/s3_service.py` |
-| **PostgreSQL Row Level Security** | RLS policies on `image_metadata` and `cluster_results` enforce `user_id = current_setting('app.current_user_id')` at query time. All API routes set this via `set_rls_user()` before every query. | `services/database.py`, PostgreSQL |
+- **Authentication:** Verified via Cognito's JWKS endpoint.
+- **Data Isolation:** Enforced at the application level by filtering all database queries by the authenticated `user_id`.
+- **S3 Access:** Secured via 15-minute **Presigned URLs**. The API ensures that users can only get or put objects within their own `uploads/{user_id}/` folder.
 
 ---
 
-## Bulk Upload
+## Bulk Upload Made Easy
 
-For uploading large batches (up to 500 images) without routing file data through the API server:
+CloudGraph handles batches of up to **500 images** at once using a high-performance "direct-to-S3" strategy. This means your images bypass the API server, preventing bottlenecks and timeouts.
 
-### Backend: `POST /api/upload/batch-presign`
-- Call once with all filenames to receive presigned S3 PUT URLs
-- Validates content types and enforces 500-file cap
-- Writes `status='pending'` rows to `image_metadata` immediately
-- Lambda updates `status='processed'` after EXIF extraction
+### How to use Bulk Upload:
 
-### Frontend: `FrontEnd/src/utils/bulkUpload.js`
-```javascript
-import { bulkUpload } from './utils/bulkUpload';
+1.  **Select Files:** In the frontend UI, select multiple images (JPEG, PNG, or HEIC).
+2.  **Get Permission:** The frontend calls `POST /api/upload/batch-presign` with the list of filenames. The backend returns a set of unique, short-lived S3 upload URLs.
+3.  **Parallel Upload:** The frontend utility (`bulkUpload.js`) automatically uploads your files directly to S3 in parallel batches.
+4.  **Background Processing:** As soon as an image hits S3, AWS SQS triggers the **Image Processor** (for EXIF extraction) and **Thumbnail Generator** (for 300x300 previews).
+5.  **Done!** Your graph will update automatically as processing finishes.
 
-const { succeeded, failed } = await bulkUpload(
-  fileList,          // FileList or File[]
-  cognitoToken,      // JWT bearer token
-  ({ completed, total, failed }) => {
-    console.log(`${completed}/${total} uploaded, ${failed} failed`);
-  }
-);
-```
-- Uploads directly to S3 in parallel batches of 20 using `Promise.allSettled`
-- A single failed upload never aborts the entire batch
-- Returns `{ succeeded: [...], failed: [...] }` for UI error surfacing
+> [!TIP]
+> The bulk upload utility uses `Promise.allSettled`, so if one file fails during a massive batch, the rest will continue successfully.
 
 ---
 
