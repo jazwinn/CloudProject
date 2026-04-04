@@ -1,4 +1,4 @@
-export const API_BASE = 'http://18.209.61.204:8000/api';
+export const API_BASE = 'CloudGraph-LoadBalancer-51588075.us-east-1.elb.amazonaws.com';
 
 export async function uploadPhoto(token, file) {
   const formData = new FormData();
