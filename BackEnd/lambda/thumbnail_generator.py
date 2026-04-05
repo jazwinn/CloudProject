@@ -9,7 +9,7 @@ from urllib.parse import unquote_plus
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from services.database import get_db, ImageMetadata, set_rls_user
+from services.database import get_db, ImageMetadata
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -20,16 +20,10 @@ s3_client = boto3.client('s3')
 def _extract_s3_event(record: dict) -> tuple[str | None, str | None]:
     """
     Parses an individual SQS record to extract the S3 bucket and key.
-
-    SQS wraps the original SNS notification which itself wraps the S3 event:
-      SQS record → body (str) → SNS Message (str) → S3 Records[0]
-
-    Returns (bucket, key) or (None, None) if the event cannot be parsed.
     """
     try:
         sqs_body = json.loads(record['body'])
 
-        # SNS wraps its payload in a "Message" field as a JSON string
         if 'Message' in sqs_body:
             sns_message = json.loads(sqs_body['Message'])
         else:
@@ -54,13 +48,6 @@ def lambda_handler(event: dict, context) -> dict:
     SQS-triggered Lambda that generates 300×300 JPEG thumbnails for uploaded images,
     stores them under thumbnails/{user_id}/{filename} in S3, and updates thumbnail_key
     in the image_metadata PostgreSQL table.
-
-    Processes records in batches (BatchSize=10 configured on the event source mapping).
-    Each record is wrapped in individual try/except so one bad image never aborts
-    the full batch. Failed record IDs are reported via BatchItemFailures so Lambda
-    only retries those records, not the entire batch.
-
-    Event source: SQS ← SNS ← S3 ObjectCreated (uploads/)
     """
     logger.info(f"Processing SQS batch of {len(event.get('Records', []))} records.")
 
@@ -101,7 +88,6 @@ def lambda_handler(event: dict, context) -> dict:
                 thumb.save(buffer, format="JPEG")
                 buffer.seek(0)
 
-                # Key format: uploads/{user_id}/{uuid}.ext → thumbnails/{user_id}/{uuid}.ext
                 parts = key.split('/')
                 user_id = parts[1] if len(parts) >= 2 else 'unknown'
                 filename = parts[-1]
@@ -117,12 +103,11 @@ def lambda_handler(event: dict, context) -> dict:
                 logger.info(f"Uploaded thumbnail: {thumb_key}")
 
                 with get_db() as session:
-                    with set_rls_user(session, user_id):
-                        db_record = session.query(ImageMetadata).filter(
-                            ImageMetadata.image_id == key
-                        ).first()
-                        if db_record:
-                            db_record.thumbnail_key = thumb_key
+                    db_record = session.query(ImageMetadata).filter(
+                        ImageMetadata.image_id == key
+                    ).first()
+                    if db_record:
+                        db_record.thumbnail_key = thumb_key
 
         except Exception as e:
             # Log the error but continue processing remaining records in the batch.

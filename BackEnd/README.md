@@ -10,11 +10,11 @@ A FastAPI backend powering the CloudGraph photo management platform. Handles aut
 Client
   │
   ▼
-FastAPI (EC2 / Docker)
+FastAPI (EC2 Auto Scaling)
   │
   ├── POST /api/upload ──────► S3 Bucket (uploads/{user_id}/{uuid}.ext)
   │                                  │
-  │                          S3 ObjectCreated event
+  │                          S3 ObjectCreated event (via SQS/SNS)
   │                          ┌───────┴────────┐
   │                          ▼                ▼
   │                 image_processor.py   thumbnail_generator.py
@@ -213,7 +213,7 @@ BackEnd/
 │
 ├── services/
 │   ├── database.py                # SQLAlchemy engine, models, session context
-│   ├── dynamo_service.py          # save_image_metadata() (writes to SQL)
+│   ├── metadata_service.py        # save_image_metadata() (writes to PostgreSQL)
 │   ├── s3_service.py              # upload_file_to_s3(), presigned URL generation
 │   ├── lambda_service.py          # invoke_clustering_lambda()
 │   ├── graph_service.py           # build_graph() — Haversine + time edge logic
@@ -226,8 +226,8 @@ BackEnd/
 │   └── clustering_processor.py    # Async Lambda DBSCAN worker
 │
 ├── scripts/
-│   ├── setup_database.py          # Creates SQL tables (run once)
-│   ├── setup_lambda_triggers.py   # Prints S3 trigger config instructions
+│   ├── setup_database.py          # Creates SQL tables manually (optional)
+│   ├── setup_ec2.sh               # User Data script for automated EC2 setup
 │   └── deploy_lambda.sh           # Zips and deploys Lambda functions
 │
 └── utils/
@@ -272,20 +272,14 @@ COGNITO_APP_CLIENT_ID="xxxxxxxxx"
 ```
 
 ### 3. Provision the Database
-Run once to create the `image_metadata` and `cluster_results` tables:
+Run once to create the `image_metadata` and `cluster_results` tables (optional, as the API also auto-creates these on first startup):
 
 ```bash
 python scripts/setup_database.py
 ```
 
 ### 4. Configure Lambda Triggers
-Print the S3 trigger configuration you'll need to apply in the AWS Console:
-
-```bash
-python scripts/setup_lambda_triggers.py
-```
-
-Then in the AWS Console, attach `s3:ObjectCreated:*` triggers on the `uploads/` prefix to both `image_processor` and `thumbnail_generator`.
+In the AWS Console, navigate to your S3 bucket and attach `s3:ObjectCreated:*` triggers on the `uploads/` prefix. Send these events to the SQS queue that triggers the `image_processor` and `thumbnail_generator` Lambdas.
 
 ### 5. Deploy Lambda Functions
 ```bash
