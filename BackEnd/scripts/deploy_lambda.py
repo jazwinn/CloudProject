@@ -2,6 +2,7 @@ import os
 import shutil
 import subprocess
 import zipfile
+import boto3
 from pathlib import Path
 
 # Configuration
@@ -13,6 +14,8 @@ UTILS_DIR = BASE_DIR / "utils"
 PACKAGE_DIR = BASE_DIR / "package"
 REQ_FILE = BASE_DIR / "lambda_requirements.txt"
 ENV_FILE = BASE_DIR / ".env"
+
+ZIP_OUTPUT_DIR = BASE_DIR / "deploy_zips"
 
 def get_s3_bucket():
     """Reads S3_BUCKET_NAME from .env file."""
@@ -31,6 +34,10 @@ def create_package():
         shutil.rmtree(PACKAGE_DIR)
     PACKAGE_DIR.mkdir()
     
+    # Create output dir for zips if missing
+    if not ZIP_OUTPUT_DIR.exists():
+        ZIP_OUTPUT_DIR.mkdir()
+    
     subprocess.check_call([
         "python", "-m", "pip", "install", 
         "-r", str(REQ_FILE), 
@@ -39,7 +46,7 @@ def create_package():
 
 def zip_lambda(lambda_name):
     """Creates a deployment zip for a specific lambda."""
-    zip_path = BASE_DIR / f"{lambda_name}.zip"
+    zip_path = ZIP_OUTPUT_DIR / f"{lambda_name}.zip"
     print(f"--- Packaging {lambda_name} -> {zip_path.name} ---")
     
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
@@ -96,17 +103,13 @@ def main():
             try:
                 deploy_to_aws(name, zip_path)
             except Exception as e:
-                print(f"AWS Deployment failed for {name} (but ZIP was created): {e}")
-            
-            # Clean up local zip
-            if zip_path.exists():
-                os.remove(zip_path)
+                print(f"AWS Deployment failed for {name} (ZIP is still in {ZIP_OUTPUT_DIR.name}): {e}")
                 
     finally:
         if PACKAGE_DIR.exists():
             shutil.rmtree(PACKAGE_DIR)
     
-    print("\n--- Process Complete ---")
+    print(f"\n--- Process Complete. Zips are available in: {ZIP_OUTPUT_DIR} ---")
 
 if __name__ == "__main__":
     main()
