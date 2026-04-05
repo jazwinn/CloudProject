@@ -3,7 +3,7 @@ from typing import Dict, Any
 from auth.cognito import get_current_user
 from services.clustering_service import compute_clusters
 from services.lambda_service import invoke_clustering_lambda
-from services.database import get_db, ImageMetadata, ClusterResult, set_rls_user
+from services.database import get_db, ImageMetadata, ClusterResult
 from datetime import datetime, timezone, timedelta
 import json
 import logging
