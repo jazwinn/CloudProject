@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from typing import Dict, Any
 from auth.cognito import get_current_user
 from services.graph_service import build_graph
-from services.database import get_db, set_rls_user
+from services.database import get_db
 import logging
 
 logger = logging.getLogger(__name__)
