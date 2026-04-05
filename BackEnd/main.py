@@ -8,6 +8,7 @@ from services.database import Base, get_engine
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Auto-create tables on startup (idempotent, only runs if they don't exist)
@@ -59,3 +60,6 @@ async def preflight_handler(full_path: str, request: Request):
             "Access-Control-Allow-Credentials": "true"
         }
     )
+
+
+  
