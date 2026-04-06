@@ -4,22 +4,77 @@ import time
 
 logger = logging.getLogger(__name__)
 
-# Simple in-memory dict cache for reverse geocoding API responses natively saving HTTP limits.
+# In-memory cache with TTL
 _geocode_cache = {}
+CACHE_TTL = 86400  # 1 day
+MAX_CACHE_SIZE = 10000
+
+# Rate limiting (Nominatim allows ~1 req/sec)
+_last_call_time = 0
+
+# Temporary block if we get rate limited
+_nominatim_blocked_until = 0
+
+
+def _rate_limit():
+    global _last_call_time
+    now = time.time()
+    elapsed = now - _last_call_time
+    if elapsed < 1.1:
+        time.sleep(1.1 - elapsed)
+    _last_call_time = time.time()
+
+
+def _get_cached(key):
+    entry = _geocode_cache.get(key)
+    if not entry:
+        return None
+
+    value, ts = entry
+    if time.time() - ts > CACHE_TTL:
+        del _geocode_cache[key]
+        return None
+
+    return value
+
+
+def _set_cache(key, value):
+    if len(_geocode_cache) > MAX_CACHE_SIZE:
+        logger.warning("Geocode cache cleared (max size reached)")
+        _geocode_cache.clear()
+
+    _geocode_cache[key] = (value, time.time())
+
+
+def _is_blocked():
+    return time.time() < _nominatim_blocked_until
+
+
+def _block_temporarily():
+    global _nominatim_blocked_until
+    _nominatim_blocked_until = time.time() + 60  # block for 1 minute
+    logger.warning("Nominatim temporarily blocked due to rate limiting (429)")
+
 
 def get_city_name(lat: float, lon: float) -> str:
     """
-    Reverse geocodes a lat/lon decimal pairing to a human-readable city or region name using free Nominatim servers.
-    Caches queries grouped roughly internally by ~1km grids.
+    Reverse geocodes a lat/lon to a city/region name using Nominatim.
+    Includes caching, rate limiting, and failure protection.
     """
+
     if lat is None or lon is None:
         return "Unknown Location"
-        
+
+    # Block if we're being rate limited
+    if _is_blocked():
+        return "Unknown Location"
+
+    # Round to ~1km grid for cache efficiency
     cache_key = f"{round(lat, 2):.2f},{round(lon, 2):.2f}"
-    
-    if cache_key in _geocode_cache:
-        # logger.debug(f"Geocode cache hit: {cache_key}")
-        return _geocode_cache[cache_key]
+
+    cached = _get_cached(cache_key)
+    if cached:
+        return cached
 
     url = "https://nominatim.openstreetmap.org/reverse"
     params = {
@@ -28,39 +83,43 @@ def get_city_name(lat: float, lon: float) -> str:
         "format": "jsonv2",
         "zoom": 10
     }
-    
+
     headers = {
         "User-Agent": "CloudGraph-PhotoApp-v2"
     }
 
-    # Simple retry logic for transient errors
-    for attempt in range(2):
-        try:
-            response = requests.get(url, params=params, headers=headers, timeout=3)
-            response.raise_for_status()
-            data = response.json()
-            
-            address = data.get("address", {})
-            city = (
-                address.get("city") or 
-                address.get("town") or 
-                address.get("village") or 
-                address.get("suburb") or
-                address.get("county") or
-                address.get("state") or 
-                address.get("country")
-            )
-            
-            label = str(city) if city else "Unknown Location"
-            _geocode_cache[cache_key] = label
-            return label
-            
-        except Exception as e:
-            if attempt == 0:
-                logger.warning(f"Nominatim attempt 1 failed for {lat},{lon}, retrying... error: {e}")
-                time.sleep(1)
-                continue
-            logger.error(f"Nominatim final failure for {lat},{lon}: {e}")
-            return "Unknown Location"
+    try:
+        _rate_limit()
 
-    return "Unknown Location"
+        response = requests.get(
+            url,
+            params=params,
+            headers=headers,
+            timeout=3
+        )
+        response.raise_for_status()
+
+        data = response.json()
+        address = data.get("address", {})
+
+        city = (
+            address.get("city") or
+            address.get("town") or
+            address.get("village") or
+            address.get("suburb") or
+            address.get("county") or
+            address.get("state") or
+            address.get("country")
+        )
+
+        label = str(city) if city else "Unknown Location"
+        _set_cache(cache_key, label)
+        return label
+
+    except Exception as e:
+        # Detect rate limiting
+        if "429" in str(e):
+            _block_temporarily()
+
+        logger.error(f"Nominatim failure for {lat},{lon}: {e}")
+        return "Unknown Location"
