@@ -388,8 +388,9 @@ export default function GraphCanvas({ token, refreshTrigger }) {
       onMouseMove={handleMouseMove}
     >
       {loading && (
-        <div style={{ position: 'absolute', top: 20, left: 20, color: 'white', zIndex: 10 }}>
-          Loading Live Data...
+        <div style={{ position: 'absolute', top: 20, left: 20, zIndex: 10, display: 'flex', alignItems: 'center', background: 'rgba(5,5,5,0.8)', padding: '10px 18px', borderRadius: '8px', border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }}>
+          <div className="spinner" />
+          <span style={{ fontSize: '0.95rem' }}>Loading Live Data...</span>
         </div>
       )}
       {!token && (

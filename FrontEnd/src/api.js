@@ -1,4 +1,4 @@
-export const API_BASE = import.meta.env.API_BASE || "http://CloudGraph-LoadBalancer-51588075.us-east-1.elb.amazonaws.com/api";
+export const API_BASE = import.meta.env.API_BASE || "http://CloudGraphLoadBalancer-1678551671.us-east-1.elb.amazonaws.com/api";
 
 export async function uploadPhoto(token, file) {
   const formData = new FormData();

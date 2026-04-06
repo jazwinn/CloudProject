@@ -86,31 +86,29 @@ A FastAPI backend handling authenticated photo uploads, automated EXIF extractio
 
 ### Architecture
 
-```
-Client
-  │
-  ▼
-FastAPI (EC2 Auto Scaling)
-  │
-  ├── POST /api/upload ──────────► S3 Bucket (uploads/{user_id}/{uuid}.ext)
-  │                                       │
-  │                               S3 ObjectCreated
-  │                                       │
-  │                                    SNS Topic
-  │                                       │
-  │                                    SQS Queue (cloudgraph-image-processing)
-  │                               ┌──────┴──────┐
-  │                               ▼             ▼
-  │                    image_processor     thumbnail_generator
-  │                    (EXIF → SQL DB)     (300x300 JPEG → S3)
-  │
-  ├── POST /api/upload/batch-presign ──► Presigned S3 PUT URLs (×500 max)
-  │                Client uploads directly to S3 in parallel batches of 20
-  │
-  ├── GET /api/graph ────────► SQL DB → Haversine + time comparison → D3-ready JSON
-  │
-  └── GET /api/clusters ─────► SQL DB → DBSCAN → cluster labels + geocoding
-                                    └── (large jobs) → Lambda async → SQL cache
+```mermaid
+graph TD
+    Client["Client"] -->|"Requests"| API["FastAPI (EC2 Auto Scaling)"]
+
+    %% Upload Flow
+    API -->|"POST /api/upload"| S3["S3 Bucket (uploads/)"]
+    S3 -->|"S3 ObjectCreated"| SNS["SNS Topic"]
+    SNS -->|"triggers"| SQS["SQS Queue (cloudgraph-image-processing)"]
+    SQS -->|"processes"| ImageProc["image_processor<br>(EXIF → SQL DB)"]
+    SQS -->|"processes"| ThumbGen["thumbnail_generator<br>(300x300 JPEG → S3)"]
+
+    %% Batch Presign
+    API -->|"POST /api/upload/batch-presign"| Presign["Presigned S3 PUT URLs"]
+    Presign -.->|"Client uploads directly"| S3
+
+    %% Graph Flow
+    API -->|"GET /api/graph"| DB["SQL DB"]
+    DB -->|"Haversine + time comparison"| GraphJSON["D3-ready JSON"]
+
+    %% Clusters Flow
+    API -->|"GET /api/clusters"| DB
+    DB -->|"DBSCAN (Background task)"| Clusters["Cluster labels + geocoding"]
+    Clusters -.->|"Caches result"| DB
 ```
 
 **AWS services used:** S3, SNS, SQS, Lambda, Cognito, RDS (PostgreSQL)
@@ -192,7 +190,7 @@ Edge `relationship` values: `"time"`, `"location"`, or `"time+location"`.
 #### `GET /api/clusters`
 Groups the user's photos into clusters using a pure Python DBSCAN implementation. Clusters are labelled with a human-readable date and city name (e.g. `2023-10-12 · Paris`) via Nominatim geocoding.
 
-For larger libraries, clustering is offloaded to an async Lambda and the result is cached in the database. Requests within 10 minutes of a completed run return the cached result instantly.
+For larger libraries, clustering runs directly in the backend EC2 server and the result is cached in the database. Requests within 10 minutes of a completed run return the cached result instantly.
 
 **Auth:** `Authorization: Bearer <cognito_token>`
 
@@ -261,7 +259,6 @@ All endpoints (except `/health`) require a Cognito JWT in the `Authorization: Be
 |----------|---------|----------------|
 | `image_processor.py` | `s3:ObjectCreated:*` on `uploads/` | Extracts EXIF date + GPS and writes to `image_metadata` |
 | `thumbnail_generator.py` | `s3:ObjectCreated:*` on `uploads/` | Generates a 300×300 JPEG thumbnail, uploads to `thumbnails/`, updates `thumbnail_key` |
-| `clustering_processor.py` | Async Lambda invocation from `/api/clusters` | Runs DBSCAN and saves result to `cluster_results` |
 
 ---
 
@@ -290,8 +287,7 @@ BackEnd/
 │   └── exif_service.py            # extract_exif_metadata() — piexif + Pillow
 ├── lambda/
 │   ├── image_processor.py         # S3-triggered EXIF extraction
-│   ├── thumbnail_generator.py     # S3-triggered thumbnail generation
-│   └── clustering_processor.py    # Async Lambda DBSCAN worker
+│   └── thumbnail_generator.py     # S3-triggered thumbnail generation
 ├── scripts/
 │   ├── setup_database.py          # Creates SQL tables manually (optional)
 │   └── deploy_lambda.py           # Python script to package and deploy Lambdas
@@ -337,11 +333,10 @@ BackEnd/
 ### Phase 2: Backend & Lambdas (EC2 Auto Scaling)
 
 #### 1. Serverless Lambda Workers
-1. Create **3 empty Lambda functions** in the AWS Console: `thumbnail_generator`, `image_processor`, and `clustering_processor`. Choose **Python 3.10+**.
+1. Create **2 empty Lambda functions** in the AWS Console: `thumbnail_generator` and `image_processor`. Choose **Python 3.10+**.
 2. **Execution Role:** If you are on a Student Account (AWS Academy/Vocareum), select the existing **`LabRole`**. Do NOT try to create a new role, as your permissions are likely restricted.
 3. In the AWS Lambda Console for each function, click **Upload from > .zip file**. Use the files in `BackEnd/deploy_zips/`.
 4. On the function pages for `image_processor` and `thumbnail_generator`, click **Add trigger** → select **SQS**, point it to `cloudgraph-image-processing`.
-5. Set **Reserved concurrency** on `clustering_processor` to **10**.
 
 #### 2. FastAPI Core Server (EC2 Auto Scaling Group)
 

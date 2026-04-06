@@ -23,7 +23,7 @@ FastAPI (EC2 Auto Scaling)
   ├── GET /api/graph ────────► SQL DB → Haversine + time comparison → D3-ready JSON
   │
   └── GET /api/clusters ─────► SQL DB → DBSCAN → cluster labels + geocoding
-                                    └── (large libraries) → Lambda async → SQL cache
+                                    └── Background task → SQL cache
 ```
 
 **AWS services used:** S3, Lambda, Cognito, RDS (PostgreSQL)
@@ -95,7 +95,7 @@ Edge `relationship` values: `"time"`, `"location"`, or `"time+location"`.
 ### `GET /api/clusters`
 Groups the authenticated user's photos into clusters using a pure Python DBSCAN implementation. Clusters are labelled with a human-readable date and city name (e.g. `2023-10-12 · Paris`) using Nominatim geocoding.
 
-For larger libraries, clustering is offloaded to an async Lambda invocation and the result is cached in the database. Subsequent requests within 10 minutes return the cached result instantly.
+For larger libraries, clustering is processed directly in the FastAPI backend on the EC2 instance, and the result is cached in the database. Subsequent requests within 10 minutes return the cached result instantly.
 
 **Auth:** `Authorization: Bearer <cognito_token>`
 
@@ -152,7 +152,7 @@ Stores photo metadata extracted from EXIF data on upload.
 | `thumbnail_key` | VARCHAR (nullable) | S3 key of the generated thumbnail |
 
 ### `cluster_results`
-Cache table for async DBSCAN results produced by the Lambda worker.
+Cache table for DBSCAN results produced by the backend.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -180,7 +180,7 @@ Both `id` tokens and `access` tokens are supported.
 
 ## Lambda Functions
 
-All three Lambdas live in the `lambda/` directory and share the same backend codebase via `sys.path`.
+The two Lambdas live in the `lambda/` directory and share the same backend codebase via `sys.path`.
 
 ### `image_processor.py`
 Triggered by `s3:ObjectCreated:*` on the `uploads/` prefix. Downloads the image from S3, runs `extract_exif_metadata()` to pull date and GPS coordinates from EXIF, then writes the result to the `image_metadata` SQL table.
@@ -188,8 +188,6 @@ Triggered by `s3:ObjectCreated:*` on the `uploads/` prefix. Downloads the image 
 ### `thumbnail_generator.py`
 Triggered by `s3:ObjectCreated:*` on the `uploads/` prefix. Generates a 300×300 JPEG thumbnail (letterboxed with a black background), uploads it to `thumbnails/{user_id}/{filename}` in S3, then updates the `thumbnail_key` column for the corresponding row in `image_metadata`.
 
-### `clustering_processor.py`
-Invoked asynchronously (fire-and-forget) by the `/api/clusters` endpoint when a library is large. Runs `compute_clusters()` and saves the result to the `cluster_results` SQL table so the next API request can return it from cache.
 
 ---
 
@@ -222,8 +220,7 @@ BackEnd/
 │
 ├── lambda/
 │   ├── image_processor.py         # S3-triggered EXIF extraction
-│   ├── thumbnail_generator.py     # S3-triggered thumbnail generation
-│   └── clustering_processor.py    # Async Lambda DBSCAN worker
+│   └── thumbnail_generator.py     # S3-triggered thumbnail generation
 │
 ├── scripts/
 │   ├── setup_database.py          # Creates SQL tables manually (optional)
@@ -258,9 +255,6 @@ AWS_REGION="us-east-1"
 
 # S3
 S3_BUCKET_NAME="cloudgraph-uploads"
-
-# Lambda
-AWS_LAMBDA_FUNCTION_NAME="cloudgraph-cluster-processor"
 
 # PostgreSQL (Amazon RDS or local)
 DATABASE_URL="postgresql://user:password@localhost:5432/cloudgraph"

@@ -4,6 +4,9 @@ from typing import Dict, Any, Optional
 import io
 from datetime import datetime
 
+from pillow_heif import register_heif_opener
+register_heif_opener()
+
 def _convert_to_degrees(value) -> float:
     """Helper function to convert EXIF GPS rationals to decimal degrees float."""
     try:

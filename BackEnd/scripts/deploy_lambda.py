@@ -6,7 +6,7 @@ import boto3
 from pathlib import Path
 
 # Configuration
-LAMBDAS = ["thumbnail_generator", "image_processor", "clustering_processor"]
+LAMBDAS = ["image_processor"]
 BASE_DIR = Path(__file__).parent.parent
 LAMBDA_DIR = BASE_DIR / "lambda"
 SERVICES_DIR = BASE_DIR / "services"
@@ -22,23 +22,7 @@ LAMBDA_REQUIREMENTS = {
         "piexif>=1.1.3",
         "pydantic>=2.0.0",
         "Pillow>=10.0.0",
-        "pydantic-settings>=2.0.0",
-        "sqlalchemy>=2.0.0",
-        "psycopg2-binary>=2.9.0",
-    ],
-    "thumbnail_generator": [
-        "boto3>=1.28.0",
-        "Pillow>=10.0.0",
-        "pydantic>=2.0.0",
-        "pydantic-settings>=2.0.0",
-        "sqlalchemy>=2.0.0",
-        "psycopg2-binary>=2.9.0",
-    ],
-    "clustering_processor": [
-        "boto3>=1.28.0",
-        "scikit-learn>=1.3.0",
-        "requests>=2.31.0",
-        "pydantic>=2.0.0",
+        "pillow-heif>=0.13.0",
         "pydantic-settings>=2.0.0",
         "sqlalchemy>=2.0.0",
         "psycopg2-binary>=2.9.0",
@@ -72,6 +56,18 @@ STRIP_FILES = {
     "setup.py", "setup.cfg",
 }
 
+def load_env():
+    if not ENV_FILE.exists():
+        return
+    with open(ENV_FILE, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            os.environ[key] = val
 
 def get_s3_bucket():
     if not ENV_FILE.exists():
@@ -226,6 +222,7 @@ def deploy_to_aws(lambda_name: str, zip_path: Path):
 
 
 def main():
+    load_env()
     if not ZIP_OUTPUT_DIR.exists():
         ZIP_OUTPUT_DIR.mkdir()
 
