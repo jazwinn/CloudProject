@@ -21,6 +21,7 @@ LAMBDA_REQUIREMENTS = {
         "boto3>=1.28.0",
         "piexif>=1.1.3",
         "pydantic>=2.0.0",
+        "Pillow>=10.0.0",
         "pydantic-settings>=2.0.0",
         "sqlalchemy>=2.0.0",
         "psycopg2-binary>=2.9.0",
@@ -48,7 +49,6 @@ LAMBDA_REQUIREMENTS = {
 STRIP_DIRS = {
     "__pycache__",
     "tests", "test",
-    "docs", "doc",
     "examples", "example",
     "benchmarks",
     "bin",

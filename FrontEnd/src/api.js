@@ -46,21 +46,10 @@ export async function getClusters(token, mode = 'combined', timeEps = 60, distEp
     min_samples: minSamples
   });
 
-  for (let i = 0; i < 20; i++) {
-    const res = await fetch(`${API_BASE}/clusters?${params}`, {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
-    });
-    if (!res.ok) throw new Error(await res.text());
+  const res = await fetch(`${API_BASE}/clusters?${params}`, {
+    headers: { 'Authorization': `Bearer ${token}` }
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
 
-    const data = await res.json();
-    if (data.status === 'processing') {
-      // Wait 10 seconds and poll again
-      await new Promise(resolve => setTimeout(resolve, 10000));
-      continue;
-    }
-    return data;
-  }
-  throw new Error("Lambda cluster processing timed out");
 }
