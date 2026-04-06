@@ -30,7 +30,7 @@ def get_image_url(
     # session can safely close AFTER we extracted what we need
 
     try:
-        presigned_url = generate_presigned_url(image_id)
+        presigned_url = generate_presigned_url(image_id, user_id)
         return {"presigned_url": presigned_url}
     except Exception as e:
         logger.error(f"Failed to generate presigned URL for {image_id}: {e}")
