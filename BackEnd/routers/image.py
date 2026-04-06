@@ -15,20 +15,19 @@ def get_image_url(
     image_id: str,
     user_id: str = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """
-    Returns a fresh presigned S3 URL for the given image key.
-    Ownership is verified against the database so this check remains
-    correct regardless of the S3 key structure.
-    """
+
     with get_db() as db:
         record = db.query(ImageMetadata).filter(
             ImageMetadata.image_id == image_id
         ).first()
 
-    if not record:
-        raise HTTPException(status_code=404, detail="Image not found")
-    if record.user_id != user_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+        if not record:
+            raise HTTPException(status_code=404, detail="Image not found")
+
+        if record.user_id != user_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    # session can safely close AFTER we extracted what we need
 
     try:
         presigned_url = generate_presigned_url(image_id)
