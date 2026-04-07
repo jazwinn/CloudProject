@@ -94,15 +94,16 @@ graph TD
     API -->|"POST /api/upload"| S3["S3 Bucket (uploads/)"]
     S3 -->|"S3 ObjectCreated"| SNS["SNS Topic"]
     SNS -->|"triggers"| SQS["SQS Queue (cloudgraph-image-processing)"]
-    SQS -->|"processes"| ImageProc["image_processor<br>(EXIF → SQL DB)"]
-    SQS -->|"processes"| ThumbGen["thumbnail_generator<br>(300x300 JPEG → S3)"]
+    SQS -->|"processes"| ImageProc["image_processor Lambda<br>(EXIF + 300x300 Thumb)"]
+    ImageProc -->|"writes"| DB["RDS PostgreSQL"]
+    ImageProc -->|"uploads"| S3
 
     %% Batch Presign
     API -->|"POST /api/upload/batch-presign"| Presign["Presigned S3 PUT URLs"]
     Presign -.->|"Client uploads directly"| S3
 
     %% Graph Flow
-    API -->|"GET /api/graph"| DB["SQL DB"]
+    API -->|"GET /api/graph"| DB
     DB -->|"Haversine + time comparison"| GraphJSON["D3-ready JSON"]
 
     %% Clusters Flow
@@ -111,7 +112,7 @@ graph TD
     Clusters -.->|"Caches result"| DB
 ```
 
-**AWS services used:** S3, SNS, SQS, Lambda, Cognito, RDS (PostgreSQL)
+**AWS services used:** S3, SNS, SQS, Lambda, Cognito, RDS (PostgreSQL), VPC (with S3 Endpoint)
 
 ---
 
@@ -257,8 +258,7 @@ All endpoints (except `/health`) require a Cognito JWT in the `Authorization: Be
 
 | Function | Trigger | Responsibility |
 |----------|---------|----------------|
-| `image_processor.py` | `s3:ObjectCreated:*` on `uploads/` | Extracts EXIF date + GPS and writes to `image_metadata` |
-| `thumbnail_generator.py` | `s3:ObjectCreated:*` on `uploads/` | Generates a 300×300 JPEG thumbnail, uploads to `thumbnails/`, updates `thumbnail_key` |
+| `image_processor.py` | `s3:ObjectCreated:*` via SQS | Extracts EXIF date + GPS, generates 300×300 JPEG thumbnails, and updates `image_metadata` |
 
 ---
 
@@ -286,8 +286,7 @@ BackEnd/
 │   ├── clustering_service.py      # compute_clusters() — pure Python DBSCAN
 │   └── exif_service.py            # extract_exif_metadata() — piexif + Pillow
 ├── lambda/
-│   ├── image_processor.py         # S3-triggered EXIF extraction
-│   └── thumbnail_generator.py     # S3-triggered thumbnail generation
+│   └── image_processor.py         # S3-triggered EXIF + Thumbnail production
 ├── scripts/
 │   ├── setup_database.py          # Creates SQL tables manually (optional)
 │   └── deploy_lambda.py           # Python script to package and deploy Lambdas
@@ -314,12 +313,28 @@ BackEnd/
 3. Leave Block Public Access **ON** — the backend generates presigned URLs, so the bucket does not need to be public
 4. Enable **CORS** in the bucket permissions to allow your frontend domain to read files
 
-#### 3. Amazon RDS (PostgreSQL Database)
+#### 3. VPC & Networking (Infrastructure)
+1.  **Create VPC**: Use the **VPC Wizard** to create a VPC with at least **2 Public Subnets** and **2 Private Subnets** across two Availability Zones.
+2.  **S3 Gateway Endpoint**: 
+    *   Navigate to **VPC > Endpoints** → **Create endpoint**.
+    *   Select `com.amazonaws.[region].s3` (Type: **Gateway**).
+    *   Associate it with your VPC **Route Tables**. This allows your EC2 instances and Lambdas to communicate with S3 without traversing the public internet.
+3.  **Security Group Hierarchy**:
+    *   **ALB Security Group**:
+        *   Inbound: **HTTP (80)** from `0.0.0.0/0`.
+    *   **EC2 Security Group** (FastAPI):
+        *   Inbound: **Custom TCP (8000)** from the **ALB Security Group**.
+    *   **RDS Security Group** (PostgreSQL):
+        *   Inbound: **PostgreSQL (5432)** from the **EC2 Security Group**.
+        *   (Optional) Inbound: **PostgreSQL (5432)** from your personal IP for initial setup.
+
+#### 4. Amazon RDS (PostgreSQL Database)
 1. Open the **AWS RDS Console** → **Create database**
 2. Select **PostgreSQL** as the engine (or **Aurora PostgreSQL** for production)
 3. Choose a `db.t3.micro` instance for development
-4. Note down your **endpoint**, **port**, **username**, and **password**
-5. Make sure its **Security Group** allows inbound connections on port `5432` from **both** your ECS task security group AND your local computer's IP address (so you can run the table creation script locally).
+4. Associate it with the **RDS Security Group** created above.
+5. Note down your **endpoint**, **port**, **username**, and **password**.
+6. Access is restricted to the EC2 security group for maximum safety.
 
 #### 4. Amazon SNS & SQS (Upload Buffering)
 1. Open the **AWS SNS Console** → **Create topic** (Standard). Name it `cloudgraph-uploads-topic`.
@@ -332,11 +347,11 @@ BackEnd/
 
 ### Phase 2: Backend & Lambdas (EC2 Auto Scaling)
 
-#### 1. Serverless Lambda Workers
-1. Create **2 empty Lambda functions** in the AWS Console: `thumbnail_generator` and `image_processor`. Choose **Python 3.10+**.
+#### 1. Serverless Lambda Worker
+1. Create **1 empty Lambda function** in the AWS Console: `image_processor`. Choose **Python 3.10+**.
 2. **Execution Role:** If you are on a Student Account (AWS Academy/Vocareum), select the existing **`LabRole`**. Do NOT try to create a new role, as your permissions are likely restricted.
-3. In the AWS Lambda Console for each function, click **Upload from > .zip file**. Use the files in `BackEnd/deploy_zips/`.
-4. On the function pages for `image_processor` and `thumbnail_generator`, click **Add trigger** → select **SQS**, point it to `cloudgraph-image-processing`.
+3. In the AWS Lambda Console, click **Upload from > .zip file**. Use the files in `BackEnd/deploy_zips/image_processor.zip`.
+4. On the function page, click **Add trigger** → select **SQS**, point it to `cloudgraph-image-processing`.
 
 #### 2. FastAPI Core Server (EC2 Auto Scaling Group)
 
@@ -383,7 +398,7 @@ CloudGraph handles batches of up to **500 images** at once using a high-performa
 1.  **Select Files:** In the frontend UI, select multiple images (JPEG, PNG, or HEIC).
 2.  **Get Permission:** The frontend calls `POST /api/upload/batch-presign` with the list of filenames. The backend returns a set of unique, short-lived S3 upload URLs.
 3.  **Parallel Upload:** The frontend utility (`bulkUpload.js`) automatically uploads your files directly to S3 in parallel batches.
-4.  **Background Processing:** As soon as an image hits S3, AWS SQS triggers the **Image Processor** (for EXIF extraction) and **Thumbnail Generator** (for 300x300 previews).
+4.  **Background Processing:** As soon as an image hits S3, AWS SQS triggers the **Image Processor** (which performs EXIF extraction AND thumbnail generation simultaneously).
 5.  **Done!** Your graph will update automatically as processing finishes.
 
 > [!TIP]
