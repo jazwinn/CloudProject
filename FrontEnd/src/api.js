@@ -15,6 +15,42 @@ export async function uploadPhoto(token, file) {
   return res.json();
 }
 
+/**
+ * Gets presigned S3 PUT URLs for a batch of files.
+ */
+export async function getBatchPresignedUrls(token, files) {
+  const res = await fetch(`${API_BASE}/upload/batch-presign`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      files: files.map(f => ({
+        filename: f.name,
+        content_type: f.type
+      }))
+    })
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json(); // { uploads: [{ filename, file_key, presigned_url }] }
+}
+
+/**
+ * Uploads a file directly to S3 using a presigned PUT URL.
+ */
+export async function uploadToS3(presignedUrl, file) {
+  const res = await fetch(presignedUrl, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': file.type
+    },
+    body: file
+  });
+  if (!res.ok) throw new Error(`S3 Upload failed: ${res.statusText}`);
+  return true;
+}
+
 export async function getGraph(token, timeEps = 120, distEps = 5.0) {
   const params = new URLSearchParams({
     time_threshold_minutes: timeEps,

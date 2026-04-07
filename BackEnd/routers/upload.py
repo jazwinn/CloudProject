@@ -114,6 +114,9 @@ async def batch_presign(
     try:
         uploads: List[BatchPresignItem] = []
         now = datetime.now(timezone.utc).isoformat()
+        
+        from services.s3_service import get_s3_client
+        s3_client = get_s3_client()
 
         with get_db() as session:
             for file_req in request.files:
@@ -125,7 +128,8 @@ async def batch_presign(
                 presigned_url = generate_presigned_put_url(
                     object_key=file_key,
                     user_id=user_id,
-                    content_type=file_req.content_type
+                    content_type=file_req.content_type,
+                    s3_client=s3_client
                 )
 
                 # Write a pending metadata row so the DB reflects the upload intent

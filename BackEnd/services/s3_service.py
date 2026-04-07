@@ -48,7 +48,7 @@ def upload_file_to_s3(file_obj, original_filename: str, user_id: str, content_ty
         raise
 
 
-def generate_presigned_url(object_key: str, user_id: str, expires_in: int = 900) -> str:
+def generate_presigned_url(object_key: str, user_id: str, expires_in: int = 900, s3_client=None) -> str:
     """
     Generates a presigned GET URL for reading an existing S3 object.
 
@@ -70,7 +70,8 @@ def generate_presigned_url(object_key: str, user_id: str, expires_in: int = 900)
 
     try:
         settings = get_settings()
-        s3_client = get_s3_client()
+        if s3_client is None:
+            s3_client = get_s3_client()
         return s3_client.generate_presigned_url(
             'get_object',
             Params={'Bucket': settings.S3_BUCKET_NAME, 'Key': object_key},
@@ -81,7 +82,7 @@ def generate_presigned_url(object_key: str, user_id: str, expires_in: int = 900)
         raise
 
 
-def generate_presigned_put_url(object_key: str, user_id: str, content_type: str, expires_in: int = 900) -> str:
+def generate_presigned_put_url(object_key: str, user_id: str, content_type: str, expires_in: int = 900, s3_client=None) -> str:
     """
     Generates a presigned PUT URL for a client to upload directly to S3.
 
@@ -106,7 +107,8 @@ def generate_presigned_put_url(object_key: str, user_id: str, content_type: str,
 
     try:
         settings = get_settings()
-        s3_client = get_s3_client()
+        if s3_client is None:
+            s3_client = get_s3_client()
         return s3_client.generate_presigned_url(
             'put_object',
             Params={
