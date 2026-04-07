@@ -414,14 +414,32 @@ In `FrontEnd/src/api.js`, point the app at your live EC2 backend:
 export const API_BASE = 'https://YOUR-ALB-DNS-NAME/api';
 ```
 
-#### 2. Deploy to AWS Amplify
+#### 2. Deploy to AWS Amplify (Standard Accounts Only)
+> [!WARNING]
+> If you are using an **AWS Student Account** (AWS Academy/Vocareum), you likely do **not** have the permissions to create the IAM roles required for AWS Amplify Hosting. In this case, please use the **Local Hosting** instructions below.
+
 1. Push your updated code to GitHub
 2. Open the **AWS Amplify Console** → **Host Web App**
 3. Connect your GitHub repository and select your branch
 4. Amplify auto-detects Vite and uses `npm run build` to compile the static assets
 5. Click **Save and Deploy**
 
-Amplify will provide a live URL (e.g. `https://main.xyz.amplifyapp.com`). Navigate there, authenticate with a Cognito token, and your photos will upload, trigger the Lambda processors, and render to the D3 graph entirely in the cloud.
+Amplify will provide a live URL (e.g. `https://main.xyz.amplifyapp.com`).
+
+#### 3. Local Hosting (Student Account Recommendation)
+If you cannot deploy to Amplify, you can run the production build locally while still connecting to your live AWS backend:
+
+1. In `FrontEnd/src/api.js`, set `API_BASE` to your **ALB DNS Name**.
+2. Build the project:
+   ```bash
+   cd FrontEnd
+   npm run build
+   ```
+3. Preview the production build:
+   ```bash
+   npm run preview
+   ```
+4. Access the app at `http://localhost:4173`. It will now use your live RDS database and S3 bucket via the EC2 API.
 
 ---
 

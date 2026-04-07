@@ -57,11 +57,11 @@ cloudgraph/
 
 ## Deployment
 
-Build the project with `npm run build`, then deploy the `dist/` folder to any static host:
-
-- **Vercel**: `npx vercel --prod`
-- **Netlify**: drag `dist/` to Netlify dashboard
-- **AWS S3 + CloudFront**: upload `dist/` to S3, serve via CloudFront
+- **AWS Amplify**: Connect your repo to the Amplify console and use `npm run build`.
+  - > [!NOTE]
+  - > **Student Accounts**: Amplify often fails due to IAM role restrictions. If so, use the local hosting method below.
+- **Vercel / Netlify**: Connect your GitHub repo and set the build command to `npm run build` and output directory to `dist/`.
+- **Local Production Host**: Run `npm run build` then `npm run preview` to host the optimized build on your own machine (useful for testing with the live cloud backend).
 
 ## Customization
 
